@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, serde::Serialize, serde::Deserialize)]
-#[sqlx(type_name = "user_role", rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Admin,
@@ -12,7 +12,7 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, serde::Serialize, serde::Deserialize)]
-#[sqlx(type_name = "task_status", rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Todo,

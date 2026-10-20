@@ -9,7 +9,9 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::MySqlPool;
 use tower_governor::{GovernorLayer, errors::GovernorError, governor::GovernorConfigBuilder};
+use uuid::Uuid;
 use validator::Validate;
 
 use crate::{
@@ -95,6 +97,19 @@ fn governor_error(err: GovernorError) -> Response {
     }
 }
 
+/// MariaDB has no RETURNING, so handlers insert with a Rust-generated id and read the row back.
+async fn user_by_id(db: &MySqlPool, id: Uuid) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as!(
+        User,
+        r#"SELECT id AS "id: Uuid", email, password_hash, full_name, role AS "role: Role",
+                  is_active AS "is_active: bool", created_at
+           FROM users WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(db)
+    .await
+}
+
 // ---------- 8a. POST /auth/register ----------
 
 async fn register(
@@ -103,26 +118,28 @@ async fn register(
 ) -> Result<(StatusCode, Json<UserResponse>), AppError> {
     let email = req.email.trim().to_lowercase();
     let hash = security::hash_password(req.password).await?;
+    let id = Uuid::new_v4();
 
-    let user = sqlx::query_as!(
-        User,
-        r#"INSERT INTO users (email, password_hash, full_name)
-           VALUES ($1, $2, $3)
-           RETURNING id, email, password_hash, full_name, role AS "role: Role", is_active, created_at"#,
+    sqlx::query!(
+        "INSERT INTO users (id, email, password_hash, full_name) VALUES (?, ?, ?, ?)",
+        id,
         email,
         hash,
         req.full_name.trim()
     )
-    .fetch_one(&state.db)
+    .execute(&state.db)
     .await
     .map_err(|e| {
-        if e.as_database_error().is_some_and(|d| d.is_unique_violation()) {
+        if e.as_database_error()
+            .is_some_and(|d| d.is_unique_violation())
+        {
             AppError::Conflict("email is already registered".into())
         } else {
             AppError::Db(e)
         }
     })?;
 
+    let user = user_by_id(&state.db, id).await?.ok_or(AppError::Internal)?;
     Ok((StatusCode::CREATED, Json(user.into())))
 }
 
@@ -135,8 +152,9 @@ async fn login(
     let email = req.email.trim().to_lowercase();
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role AS "role: Role", is_active, created_at
-           FROM users WHERE email = $1"#,
+        r#"SELECT id AS "id: Uuid", email, password_hash, full_name, role AS "role: Role",
+                  is_active AS "is_active: bool", created_at
+           FROM users WHERE email = ?"#,
         email
     )
     .fetch_optional(&state.db)
@@ -158,9 +176,9 @@ async fn login(
     let access_token = security::create_access_token(user.id, &state.config)?;
     let (refresh_token, refresh_hash) = security::new_refresh_token();
     sqlx::query!(
-        "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
-        user.id,
+        "INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
         refresh_hash,
+        user.id,
         Utc::now() + Duration::days(state.config.refresh_days)
     )
     .execute(&state.db)
@@ -187,10 +205,11 @@ async fn refresh(
     let mut tx = state.db.begin().await?;
 
     let row = sqlx::query!(
-        r#"SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, u.is_active
+        r#"SELECT rt.user_id AS "user_id: Uuid", rt.expires_at, rt.revoked_at,
+                  u.is_active AS "is_active: bool"
            FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id
-           WHERE rt.token_hash = $1
-           FOR UPDATE OF rt"#,
+           WHERE rt.token_hash = ?
+           FOR UPDATE"#,
         hash
     )
     .fetch_optional(&mut *tx)
@@ -200,7 +219,7 @@ async fn refresh(
     if row.revoked_at.is_some() {
         // Reuse detected: an old token came back, so assume theft and end every session.
         sqlx::query!(
-            "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
             row.user_id
         )
         .execute(&mut *tx)
@@ -213,14 +232,17 @@ async fn refresh(
     }
 
     // Revoke the old token and issue a new one.
-    sqlx::query!("UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1", row.id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = ?",
+        hash
+    )
+    .execute(&mut *tx)
+    .await?;
     let (new_token, new_hash) = security::new_refresh_token();
     sqlx::query!(
-        "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
-        row.user_id,
+        "INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
         new_hash,
+        row.user_id,
         Utc::now() + Duration::days(state.config.refresh_days)
     )
     .execute(&mut *tx)
@@ -245,7 +267,7 @@ async fn logout(
     let hash = security::hash_refresh_token(&req.refresh_token);
     // Already revoked or unknown is fine. We still return 204.
     sqlx::query!(
-        "UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL",
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = ? AND revoked_at IS NULL",
         hash
     )
     .execute(&state.db)
@@ -256,16 +278,9 @@ async fn logout(
 // ---------- 8e. GET /auth/me ----------
 
 async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
-    let row = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, role AS "role: Role", is_active, created_at
-           FROM users WHERE id = $1"#,
-        user.id
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(AppError::Unauthorized)?;
-
+    let row = user_by_id(&state.db, user.id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     Ok(Json(row.into()))
 }
 
@@ -276,15 +291,9 @@ async fn change_password(
     user: AuthUser,
     ValidatedJson(req): ValidatedJson<ChangePasswordReq>,
 ) -> Result<StatusCode, AppError> {
-    let current = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, role AS "role: Role", is_active, created_at
-           FROM users WHERE id = $1"#,
-        user.id
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(AppError::Unauthorized)?;
+    let current = user_by_id(&state.db, user.id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
 
     if !security::verify_password(req.current_password, current.password_hash).await {
         // 400, not 401. A 401 would make clients think their login has expired.
@@ -295,11 +304,15 @@ async fn change_password(
 
     // Update the hash and end every session in the same transaction.
     let mut tx = state.db.begin().await?;
-    sqlx::query!("UPDATE users SET password_hash = $2 WHERE id = $1", user.id, new_hash)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query!(
-        "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        new_hash,
+        user.id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
         user.id
     )
     .execute(&mut *tx)

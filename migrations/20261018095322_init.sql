@@ -1,50 +1,57 @@
-CREATE TYPE user_role   AS ENUM ('admin', 'manager', 'member');
-CREATE TYPE task_status AS ENUM ('todo', 'in_progress', 'done');
+-- MariaDB has no gen_random_uuid(): the app generates every UUID and stores it as BINARY(16).
 
 CREATE TABLE users (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email         TEXT NOT NULL UNIQUE,          -- store lowercased
-  password_hash TEXT NOT NULL,
-  full_name     TEXT NOT NULL,
-  role          user_role NOT NULL DEFAULT 'member',
+  id            BINARY(16) PRIMARY KEY,
+  email         VARCHAR(255) NOT NULL UNIQUE,  -- store lowercased
+  password_hash VARCHAR(255) NOT NULL,
+  full_name     VARCHAR(100) NOT NULL,
+  role          ENUM('admin', 'manager', 'member') NOT NULL DEFAULT 'member',
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+  -- shortcut: TIMESTAMP stops at 2038, switch to DATETIME(6) before then
+  created_at    TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB;
 
 CREATE TABLE projects (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name        TEXT NOT NULL,
+  id          BINARY(16) PRIMARY KEY,
+  name        VARCHAR(255) NOT NULL,
   description TEXT,
-  owner_id    UUID NOT NULL REFERENCES users(id),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+  owner_id    BINARY(16) NOT NULL,
+  created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  FOREIGN KEY (owner_id) REFERENCES users(id)
+) ENGINE=InnoDB;
 
 CREATE TABLE project_members (
-  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  PRIMARY KEY (project_id, user_id)
-);
+  project_id BINARY(16) NOT NULL,
+  user_id    BINARY(16) NOT NULL,
+  PRIMARY KEY (project_id, user_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 CREATE TABLE tasks (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  title       TEXT NOT NULL,
+  id          BINARY(16) PRIMARY KEY,
+  project_id  BINARY(16) NOT NULL,
+  title       VARCHAR(255) NOT NULL,
   description TEXT,
-  status      task_status NOT NULL DEFAULT 'todo',
-  assignee_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  created_by  UUID NOT NULL REFERENCES users(id),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX ON tasks (project_id);
-CREATE INDEX ON tasks (assignee_id);
+  status      ENUM('todo', 'in_progress', 'done') NOT NULL DEFAULT 'todo',
+  assignee_id BINARY(16),
+  created_by  BINARY(16) NOT NULL,
+  created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (assignee_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id),
+  INDEX (project_id),
+  INDEX (assignee_id)
+) ENGINE=InnoDB;
 
+-- The token hash is the primary key, so no separate id is needed.
 CREATE TABLE refresh_tokens (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token_hash  TEXT NOT NULL UNIQUE,
-  expires_at  TIMESTAMPTZ NOT NULL,
-  revoked_at  TIMESTAMPTZ,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX ON refresh_tokens (user_id);
+  token_hash  CHAR(43) PRIMARY KEY,  -- SHA-256 in URL-safe base64, always 43 chars
+  user_id     BINARY(16) NOT NULL,
+  expires_at  TIMESTAMP(6) NOT NULL,
+  revoked_at  TIMESTAMP(6) NULL,
+  created_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX (user_id)
+) ENGINE=InnoDB;

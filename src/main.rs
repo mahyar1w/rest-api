@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use sqlx::postgres::PgPoolOptions;
+use sqlx::mysql::MySqlPoolOptions;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -10,11 +10,13 @@ use task_api::{build_app, config::Config, state::AppState};
 async fn main() {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let config = Config::from_env();
-    let db = PgPoolOptions::new()
+    let db = MySqlPoolOptions::new()
         .connect(&config.database_url)
         .await
         .expect("failed to connect to the database");

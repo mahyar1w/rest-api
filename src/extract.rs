@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Query, Request},
+    extract::{FromRequest, FromRequestParts, Request},
     http::{header::AUTHORIZATION, request::Parts},
 };
 use serde::de::DeserializeOwned;
@@ -8,12 +8,7 @@ use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::{
-    error::AppError,
-    models::Role,
-    security::decode_access_token,
-    state::AppState,
-};
+use crate::{error::AppError, models::Role, security::decode_access_token, state::AppState};
 
 /// The logged-in user. Any handler that takes this as a parameter is protected.
 #[derive(Debug, Clone)]
@@ -40,7 +35,7 @@ impl FromRequestParts<AppState> for AuthUser {
         // 3. Load the user on EVERY request, so a deleted or deactivated user gets 401
         sqlx::query_as!(
             AuthUser,
-            r#"SELECT id, role AS "role: Role" FROM users WHERE id = $1 AND is_active"#,
+            r#"SELECT id AS "id: Uuid", role AS "role: Role" FROM users WHERE id = ? AND is_active"#,
             claims.sub
         )
         .fetch_optional(&state.db)
@@ -82,22 +77,4 @@ fn validation_error(e: validator::ValidationErrors) -> AppError {
         })
         .collect();
     AppError::Validation(serde_json::Value::Object(fields))
-}
-
-pub struct ValidatedQuery<T>(pub T);
-
-impl<S, T> FromRequest<S> for ValidatedQuery<T>
-where
-    T: DeserializeOwned + Validate,
-    S: Send + Sync,
-{
-    type Rejection = AppError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, AppError> {
-        let Query(v) = Query::<T>::from_request(req, state)
-            .await
-            .map_err(|e| AppError::BadRequest(e.body_text()))?;
-        v.validate().map_err(validation_error)?;
-        Ok(Self(v))
-    }
 }

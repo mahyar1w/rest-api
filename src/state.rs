@@ -4,6 +4,6 @@ use crate::config::Config;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: sqlx::PgPool,
+    pub db: sqlx::MySqlPool,
     pub config: Arc<Config>,
 }
