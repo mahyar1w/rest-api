@@ -29,6 +29,19 @@ pub enum AppError {
     Internal,
 }
 
+impl AppError {
+    /// A unique-constraint violation becomes a 409 with `msg`. Any other database error stays a 500.
+    pub fn conflict_or_db(e: sqlx::Error, msg: &str) -> Self {
+        if e.as_database_error()
+            .is_some_and(|d| d.is_unique_violation())
+        {
+            Self::Conflict(msg.into())
+        } else {
+            Self::Db(e)
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, details) = match &self {

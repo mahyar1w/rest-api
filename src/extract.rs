@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Request},
+    extract::{FromRequest, FromRequestParts, Query, Request},
     http::{header::AUTHORIZATION, request::Parts},
 };
 use serde::de::DeserializeOwned;
@@ -55,6 +55,24 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, AppError> {
         let Json(v) = Json::<T>::from_request(req, state)
+            .await
+            .map_err(|e| AppError::BadRequest(e.body_text()))?;
+        v.validate().map_err(validation_error)?;
+        Ok(Self(v))
+    }
+}
+
+pub struct ValidatedQuery<T>(pub T);
+
+impl<S, T> FromRequest<S> for ValidatedQuery<T>
+where
+    T: DeserializeOwned + Validate,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, AppError> {
+        let Query(v) = Query::<T>::from_request(req, state)
             .await
             .map_err(|e| AppError::BadRequest(e.body_text()))?;
         v.validate().map_err(validation_error)?;

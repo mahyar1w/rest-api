@@ -98,7 +98,7 @@ fn governor_error(err: GovernorError) -> Response {
 }
 
 /// MariaDB has no RETURNING, so handlers insert with a Rust-generated id and read the row back.
-async fn user_by_id(db: &MySqlPool, id: Uuid) -> Result<Option<User>, sqlx::Error> {
+pub async fn user_by_id(db: &MySqlPool, id: Uuid) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as!(
         User,
         r#"SELECT id AS "id: Uuid", email, password_hash, full_name, role AS "role: Role",
@@ -129,15 +129,7 @@ async fn register(
     )
     .execute(&state.db)
     .await
-    .map_err(|e| {
-        if e.as_database_error()
-            .is_some_and(|d| d.is_unique_violation())
-        {
-            AppError::Conflict("email is already registered".into())
-        } else {
-            AppError::Db(e)
-        }
-    })?;
+    .map_err(|e| AppError::conflict_or_db(e, "email is already registered"))?;
 
     let user = user_by_id(&state.db, id).await?.ok_or(AppError::Internal)?;
     Ok((StatusCode::CREATED, Json(user.into())))
