@@ -110,9 +110,8 @@ curl -s $API/projects/$PROJECT -H "Authorization: Bearer $STRANGER"
 # 404 {"error":{"code":"NOT_FOUND","message":"not found","details":null}}
 ```
 
-## Why Rust and MariaDB
+## Why MariaDB
 
-- **Rust + Axum:** the type system catches whole classes of auth mistakes at compile time. A handler that takes `AuthUser` cannot run without a valid token, and `UserResponse` has no hash field, so the hash cannot be serialized by accident.
 - **SQLx:** plain SQL with compile-time checking against the real schema, no ORM layer to learn or hide behind.
 - **MariaDB:** a common, free relational database. The data is relational (users, projects, members, tasks) and needs foreign keys, cascades and transactions.
 
@@ -156,3 +155,6 @@ Where the brief left room, I chose:
 - Soft delete for projects and tasks.
 - Docker Compose to start MariaDB and the API with one command.
 - Permission-based checks (e.g. `project:manage`) instead of role names in `policy.rs`.
+
+## Acknowledgement
+Ai agents have been used in this project for debugging purposes. As well as creating documentation and tests. however the code itself is mostly hand-written
