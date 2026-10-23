@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE tasks SET assignee_id = NULL WHERE project_id = ? AND assignee_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c0837f02ef1be7fc62904565764a1fead184ed95b95ede42c26bf2cf47cedba2"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f07e0e033506648ba8ecca4e29add2c11bd18a8c35d087fb6c4cd643849a5dfc"
+}
