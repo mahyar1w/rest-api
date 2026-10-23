@@ -14,6 +14,8 @@ cargo test                  # needs the database from .env
 
 `query!` macros check SQL at compile time. The `.sqlx/` folder caches that check, so `SQLX_OFFLINE=true cargo build` works without a database. After changing any `query!` SQL, rerun `cargo sqlx prepare --workspace -- --all-targets` and commit `.sqlx/`.
 
+CI (`.github/workflows/ci.yml`) runs fmt, clippy and the tests against a MariaDB service container, building from the `.sqlx/` cache.
+
 ## Endpoints
 
 | Area | Routes |

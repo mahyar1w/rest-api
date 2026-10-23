@@ -1,0 +1,34 @@
+name: CI
+on: [push, pull_request]
+
+env:
+  SQLX_OFFLINE: "true" # query! checks come from .sqlx/, so only the tests need a database
+  DATABASE_URL: mysql://app:app@127.0.0.1:3306/tasks
+  JWT_SECRET: ci-secret-ci-secret-ci-secret-ci
+  ACCESS_TOKEN_MINUTES: "15"
+  REFRESH_TOKEN_DAYS: "7"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: tasks
+          MARIADB_USER: app
+          MARIADB_PASSWORD: app
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
