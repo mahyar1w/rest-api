@@ -7,6 +7,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::{config::Config, error::AppError};
@@ -27,8 +28,12 @@ fn verify_password_blocking(pw: &str, hash: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Each argon2 run takes ~19 MiB, so this caps hashing RAM at ~150 MiB however many requests arrive.
+static HASH_SLOTS: Semaphore = Semaphore::const_new(8);
+
 /// Hashes a password on a blocking thread, because argon2 is deliberately slow.
 pub async fn hash_password(pw: String) -> Result<String, AppError> {
+    let _slot = HASH_SLOTS.acquire().await.map_err(|_| AppError::Internal)?;
     tokio::task::spawn_blocking(move || hash_password_blocking(&pw))
         .await
         .map_err(|_| AppError::Internal)?
@@ -36,6 +41,9 @@ pub async fn hash_password(pw: String) -> Result<String, AppError> {
 
 /// Verifies a password on a blocking thread. A join failure counts as a mismatch.
 pub async fn verify_password(pw: String, hash: String) -> bool {
+    let Ok(_slot) = HASH_SLOTS.acquire().await else {
+        return false;
+    };
     tokio::task::spawn_blocking(move || verify_password_blocking(&pw, &hash))
         .await
         .unwrap_or(false)
