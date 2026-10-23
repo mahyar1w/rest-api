@@ -142,6 +142,7 @@ Where the brief left room, I chose:
 ## Known limits
 
 - `TIMESTAMP` columns stop at 2038.
+- sqlx's migration lock does nothing on MariaDB (`GET_LOCK(name, -1)` returns NULL at once instead of waiting), so never start two processes on an empty database at the same time. Run `seed` first; it migrates.
 - Expired refresh tokens are never purged, and the rate limiter's memory isn't cleaned.
 - Rate limiting keys on the peer IP; behind a proxy switch to `SmartIpKeyExtractor`.
 - A wrong HTTP method (405) and a too-large body (413) still answer in axum's own format, not the JSON error shape.
