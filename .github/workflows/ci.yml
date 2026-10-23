@@ -7,6 +7,8 @@ env:
   JWT_SECRET: ci-secret-ci-secret-ci-secret-ci
   ACCESS_TOKEN_MINUTES: "15"
   REFRESH_TOKEN_DAYS: "7"
+  ADMIN_EMAIL: admin@example.com
+  ADMIN_PASSWORD: ci-admin-password
 
 jobs:
   check:
@@ -31,4 +33,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo test # unit tests only; the API tests are in Python below
+      - run: cargo run --bin seed
+      - run: cargo build
+      - run: |
+          ./target/debug/task_api &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:3000/health && break; sleep 1; done
+          python3 -m unittest -v tests/test_api.py
