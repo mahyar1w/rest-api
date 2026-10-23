@@ -147,14 +147,5 @@ Where the brief left room, I chose:
 - A wrong HTTP method (405) and a too-large body (413) still answer in axum's own format, not the JSON error shape.
 - API tests share the `tasks` database and use unique emails; no cleanup. Each request comes from a random 127.x.y.z address so the login limiter doesn't trip, which needs Linux.
 
-## With more time
-
-- OpenAPI/Swagger docs generated from the handlers (e.g. `utoipa`).
-- A background job that deletes expired refresh tokens, and a session list with "log out everywhere".
-- An audit log for role changes, deactivations and project deletes.
-- Soft delete for projects and tasks.
-- Docker Compose to start MariaDB and the API with one command.
-- Permission-based checks (e.g. `project:manage`) instead of role names in `policy.rs`.
-
 ## Acknowledgement
 Ai agents have been used in this project for debugging purposes. As well as creating documentation and tests. however the code itself is mostly hand-written
