@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::MySqlPool;
+use sqlx::{MySqlConnection, MySqlPool};
 use tower_governor::{GovernorLayer, errors::GovernorError, governor::GovernorConfigBuilder};
 use uuid::Uuid;
 use validator::Validate;
@@ -64,7 +64,8 @@ pub struct TokenResponse {
 // ---------- Router ----------
 
 pub fn router() -> Router<AppState> {
-    // One token every 12 seconds, with a burst of 5 per IP. Only login is limited.
+    // One token every 12 seconds, with a burst of 5 per IP, shared by register and login:
+    // both run argon2, so both are expensive for the server.
     let governor = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(12)
@@ -72,11 +73,11 @@ pub fn router() -> Router<AppState> {
             .finish()
             .expect("valid governor config"),
     );
-    let login = post(login).layer(GovernorLayer::new(governor).error_handler(governor_error));
+    let limit = GovernorLayer::new(governor).error_handler(governor_error);
 
     Router::new()
-        .route("/auth/register", post(register))
-        .route("/auth/login", login)
+        .route("/auth/register", post(register).layer(limit.clone()))
+        .route("/auth/login", post(login).layer(limit))
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
@@ -108,6 +109,20 @@ pub async fn user_by_id(db: &MySqlPool, id: Uuid) -> Result<Option<User>, sqlx::
     )
     .fetch_optional(db)
     .await
+}
+
+/// Ends every session of a user. Callers pass their transaction, so it commits with their other writes.
+pub async fn revoke_all_sessions(
+    conn: &mut MySqlConnection,
+    user_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
+        user_id
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 // ---------- 8a. POST /auth/register ----------
@@ -210,12 +225,7 @@ async fn refresh(
 
     if row.revoked_at.is_some() {
         // Reuse detected: an old token came back, so assume theft and end every session.
-        sqlx::query!(
-            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
-            row.user_id
-        )
-        .execute(&mut *tx)
-        .await?;
+        revoke_all_sessions(&mut tx, row.user_id).await?;
         tx.commit().await?;
         return Err(AppError::Unauthorized);
     }
@@ -303,12 +313,7 @@ async fn change_password(
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!(
-        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
-        user.id
-    )
-    .execute(&mut *tx)
-    .await?;
+    revoke_all_sessions(&mut tx, user.id).await?;
     tx.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)

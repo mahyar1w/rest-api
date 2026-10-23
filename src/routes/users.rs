@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::State,
     routing::{get, patch},
 };
 use serde::Deserialize;
@@ -9,11 +9,11 @@ use validator::Validate;
 
 use crate::{
     error::AppError,
-    extract::{AuthUser, ValidatedJson, ValidatedQuery},
+    extract::{AuthUser, Path, ValidatedJson, ValidatedQuery},
     models::{Role, User, UserResponse},
     page::{Page, Paged, clamp},
     policy,
-    routes::auth::user_by_id,
+    routes::auth::{revoke_all_sessions, user_by_id},
     state::AppState,
 };
 
@@ -117,12 +117,7 @@ async fn set_status(
     .await?;
     if !req.is_active {
         // The user can't log in again, and their existing sessions end now.
-        sqlx::query!(
-            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
-            id
-        )
-        .execute(&mut *tx)
-        .await?;
+        revoke_all_sessions(&mut tx, id).await?;
     }
     tx.commit().await?;
 

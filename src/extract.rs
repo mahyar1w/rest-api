@@ -3,7 +3,7 @@ use axum::{
     extract::{FromRequest, FromRequestParts, Query, Request},
     http::{header::AUTHORIZATION, request::Parts},
 };
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
@@ -41,6 +41,32 @@ impl FromRequestParts<AppState> for AuthUser {
         .fetch_optional(&state.db)
         .await?
         .ok_or(AppError::Unauthorized)
+    }
+}
+
+/// For PATCH fields typed `Option<Option<T>>` with `#[serde(default)]`: absent stays `None`,
+/// null becomes `Some(None)` (clear it), a value becomes `Some(Some(v))`.
+pub fn present_or_null<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
+}
+
+/// axum's `Path`, but a bad value (like a malformed UUID) gets the usual JSON 400 instead of plain text.
+pub struct Path<T>(pub T);
+
+impl<S, T> FromRequestParts<S> for Path<T>
+where
+    T: DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AppError> {
+        axum::extract::Path::<T>::from_request_parts(parts, state)
+            .await
+            .map(|p| Self(p.0))
+            .map_err(|e| AppError::BadRequest(e.body_text()))
     }
 }
 

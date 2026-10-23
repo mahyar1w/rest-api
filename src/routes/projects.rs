@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     routing::{delete, get, post},
 };
@@ -11,7 +11,7 @@ use validator::Validate;
 
 use crate::{
     error::AppError,
-    extract::{AuthUser, ValidatedJson, ValidatedQuery},
+    extract::{AuthUser, Path, ValidatedJson, ValidatedQuery, present_or_null},
     models::Project,
     page::{Page, Paged, clamp},
     policy::{self, ProjectCtx},
@@ -30,8 +30,10 @@ pub struct CreateProject {
 pub struct UpdateProject {
     #[validate(length(min = 1, max = 255))]
     name: Option<String>,
+    /// Absent keeps it, null clears it.
     #[validate(length(max = 5000))]
-    description: Option<String>,
+    #[serde(default, deserialize_with = "present_or_null")]
+    description: Option<Option<String>>,
 }
 
 #[derive(Deserialize, Validate)]
@@ -54,6 +56,22 @@ async fn find_project(db: &MySqlPool, id: Uuid) -> Result<Option<Project>, sqlx:
         .await
 }
 
+/// True if `user_id` has a `project_members` row. The owner usually has none.
+pub async fn is_member(
+    db: &MySqlPool,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM project_members WHERE project_id = ? AND user_id = ?",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+    Ok(n > 0)
+}
+
 /// Loads a project the user is allowed to SEE, or returns 404. A project the user can't see
 /// looks the same as one that doesn't exist, so its existence is not revealed.
 pub async fn load_visible_project(
@@ -62,16 +80,9 @@ pub async fn load_visible_project(
     id: Uuid,
 ) -> Result<(Project, ProjectCtx), AppError> {
     let project = find_project(db, id).await?.ok_or(AppError::NotFound)?;
-    let members: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM project_members WHERE project_id = ? AND user_id = ?",
-    )
-    .bind(id)
-    .bind(u.id)
-    .fetch_one(db)
-    .await?;
     let ctx = ProjectCtx {
         owner_id: project.owner_id,
-        is_member: members > 0,
+        is_member: is_member(db, id, u.id).await?,
     };
     if !policy::can_view_project(u, &ctx) {
         return Err(AppError::NotFound);
@@ -175,10 +186,11 @@ async fn update(
     ValidatedJson(req): ValidatedJson<UpdateProject>,
 ) -> Result<Json<Project>, AppError> {
     load_manageable_project(&state.db, &user, id).await?;
-    // COALESCE keeps the old value for any field the client left out.
-    sqlx::query("UPDATE projects SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?")
+    // COALESCE keeps the old name if left out. IF(present, value, old) lets null clear the description.
+    sqlx::query("UPDATE projects SET name = COALESCE(?, name), description = IF(?, ?, description) WHERE id = ?")
         .bind(req.name.map(|n| n.trim().to_string()))
-        .bind(req.description)
+        .bind(req.description.is_some())
+        .bind(req.description.flatten())
         .bind(id)
         .execute(&state.db)
         .await?;

@@ -13,7 +13,7 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 
 use state::AppState;
 
-/// Builds the whole app. The integration tests in Step 12 call this too.
+/// Builds the whole app.
 pub fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -21,6 +21,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(routes::users::router())
         .merge(routes::projects::router())
         .merge(routes::tasks::router())
+        .fallback(|| async { error::AppError::NotFound })
         .layer(RequestBodyLimitLayer::new(64 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
