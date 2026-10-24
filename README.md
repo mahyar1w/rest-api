@@ -148,4 +148,4 @@ Where the brief left room, I chose:
 - API tests share the `tasks` database and use unique emails; no cleanup. Each request comes from a random 127.x.y.z address so the login limiter doesn't trip, which needs Linux.
 
 ## Acknowledgement
-Ai agents have been used in this project for debugging purposes. As well as creating documentation and tests. however the code itself is mostly hand-written
+Ai agents have been used in this project for debugging purposes. As well as creating documentation and tests. however the code itself is majority hand-written
